@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My VR server</title>
+<style>
+  :root { --bg: #0e1319; --card: #161d26; --ink: #e6ebf1; --soft: #9daab8; --accent: #2bc8e8; --ok: #3fb37f; --bad: #e0964a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; padding: 16px; }
+  main { max-width: 720px; margin: 0 auto; display: grid; gap: 14px; }
+  h1 { font: 600 24px ui-monospace, Menlo, monospace; margin: 4px 0 0; }
+  section { background: var(--card); border-radius: 8px; padding: 14px 16px; }
+  h2 { font: 600 13px ui-monospace, Menlo, monospace; letter-spacing: .1em; text-transform: uppercase; color: var(--soft); margin: 0 0 8px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  canvas { width: 100%; height: 260px; background: #0a0e13; border-radius: 6px; touch-action: none; display: block; }
+  input, textarea { width: 100%; font: inherit; color: var(--ink); background: #0a0e13; border: 1px solid #2a343f; border-radius: 6px; padding: 8px 10px; }
+  button { font: 600 14px system-ui, sans-serif; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #031418; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  #reply { white-space: pre-wrap; color: var(--ink); min-height: 1.5em; margin-top: 8px; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: .9em; }
+</style>
+<main>
+  <h1>My VR server</h1>
+
+  <section>
+    <h2>Status</h2>
+    <div id="https">…</div>
+    <div id="health">…</div>
+  </section>
+
+  <section>
+    <h2>Shared room</h2>
+    <p style="margin:0 0 8px;color:var(--soft)">Open this page on two devices. Move or tap: everyone sees everyone's dot.</p>
+    <canvas id="room"></canvas>
+    <div id="roomStatus" style="margin-top:6px;color:var(--soft)">connecting…</div>
+  </section>
+
+  <section>
+    <h2>Gemini</h2>
+    <textarea id="persona" rows="2">You are a friendly guide inside a VR app. Answer in one or two short spoken sentences. No lists, no markdown, no emoji.</textarea>
+    <div class="row" style="margin-top:8px">
+      <input id="msg" value="Hi! What could I build in VR with a cloud server?" style="flex:1">
+      <button id="ask">Ask</button>
+    </div>
+    <div id="reply"></div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+
+// ---------- status: HTTPS (WebXR needs it) and the server's health ----------
+$('https').innerHTML = window.isSecureContext
+  ? `<span class="ok">✓ HTTPS</span>: WebXR can start on this page${navigator.xr ? '' : ' (this browser has no WebXR)'}`
+  : '<span class="bad">✗ not HTTPS</span>: browsers block WebXR, the microphone and the camera here';
+fetch('/api/health').then(r => r.json()).then(h => {
+  $('health').innerHTML = `<span class="ok">✓ server up</span> · project <code>${h.project}</code> · model <code>${h.model}</code>`;
+}).catch(() => { $('health').innerHTML = '<span class="bad">✗ no answer from /api/health</span>'; });
+
+// ---------- shared room: send my dot, draw everyone's ----------
+const cv = $('room'), g = cv.getContext('2d');
+const dots = new Map();                     // id -> { x, y, color, t }
+let me = null;
+const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/room');
+ws.onopen = () => { $('roomStatus').textContent = 'connected'; };
+ws.onclose = () => { $('roomStatus').textContent = 'disconnected: reload the page'; };
+ws.onmessage = e => {
+  const m = JSON.parse(e.data);
+  if (m.type === 'welcome') { me = m; $('roomStatus').textContent = `you are ${m.id} · ${m.others} other(s) here`; }
+  else if (m.type === 'left') dots.delete(m.from);
+  else if (m.type === 'move') dots.set(m.from, { x: m.x, y: m.y, color: m.color, t: performance.now() });
+};
+let last = 0;
+cv.addEventListener('pointermove', e => {
+  if (!me || ws.readyState !== 1) return;
+  const r = cv.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+  dots.set(me.id, { x, y, color: me.color, t: performance.now(), mine: true });
+  const now = performance.now();
+  if (now - last > 33) { ws.send(JSON.stringify({ type: 'move', x, y })); last = now; }   // about 30 updates a second
+});
+cv.addEventListener('pointerdown', e => cv.dispatchEvent(new PointerEvent('pointermove', e)));
+(function draw() {
+  const w = cv.width = cv.clientWidth * devicePixelRatio, h = cv.height = cv.clientHeight * devicePixelRatio;
+  g.clearRect(0, 0, w, h);
+  for (const [id, d] of dots) {
+    g.fillStyle = d.color; g.beginPath(); g.arc(d.x * w, d.y * h, (d.mine ? 14 : 11) * devicePixelRatio, 0, 7); g.fill();
+    g.fillStyle = '#fff'; g.font = `${12 * devicePixelRatio}px system-ui`; g.fillText(d.mine ? 'you' : id, d.x * w + 16 * devicePixelRatio, d.y * h + 4);
+  }
+  requestAnimationFrame(draw);
+})();
+
+// ---------- Gemini, through this server ----------
+let session = '';
+$('ask').onclick = async () => {
+  $('ask').disabled = true; $('reply').textContent = '…';
+  try {
+    const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: $('msg').value, session, persona: $('persona').value }) });
+    const out = await r.json();
+    if (!r.ok) throw new Error(out.error || r.status);
+    session = out.session; $('reply').textContent = out.reply;
+  } catch (e) { $('reply').innerHTML = `<span class="bad">${e.message}</span>`; }
+  $('ask').disabled = false;
+};
+$('msg').addEventListener('keydown', e => { if (e.key === 'Enter') $('ask').click(); });
+</script>
+</html>

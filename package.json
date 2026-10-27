@@ -1,0 +1,14 @@
+{
+  "name": "vr-class-server",
+  "version": "1.0.0",
+  "description": "A Google Cloud VM server for a VR class project: your web files over HTTPS, a shared WebSocket room, and Gemini on your credits",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": { "start": "node server.mjs" },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@google/genai": "^2.31.0",
+    "ws": "^8.22.0"
+  },
+  "license": "MIT"
+}
