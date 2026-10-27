@@ -19,9 +19,22 @@ fi
 
 echo "== installing Node and Caddy (a minute or two)"
 sudo apt-get update -qq
-sudo apt-get install -y -qq nodejs npm curl gpg debian-keyring debian-archive-keyring apt-transport-https >/dev/null
-NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]')
-if [ "$NODE_MAJOR" -lt 20 ]; then echo "!! Node $NODE_MAJOR is too old (need 20+): make the VM with Debian 13"; exit 1; fi
+sudo apt-get install -y -qq curl gpg debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+node_major() { command -v node >/dev/null && node -p 'process.versions.node.split(".")[0]' || echo 0; }
+if [ "$(node_major)" -lt 20 ]; then
+  . /etc/os-release
+  if [ "${VERSION_ID%%.*}" -ge 13 ] 2>/dev/null; then
+    sudo apt-get install -y -qq nodejs npm >/dev/null               # Debian 13's own Node is 20
+  else
+    # Debian 12 (Google's default image) only has Node 18: take Node 22 from NodeSource instead
+    sudo apt-get remove -y -qq nodejs npm >/dev/null 2>&1 || true
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor --yes -o /usr/share/keyrings/nodesource.gpg
+    echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list >/dev/null
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq nodejs >/dev/null                    # NodeSource's nodejs includes npm
+  fi
+fi
+if [ "$(node_major)" -lt 20 ]; then echo "!! Node $(node --version 2>/dev/null) is too old (need 20+)"; exit 1; fi
 if ! command -v caddy >/dev/null || ! apt-cache policy caddy | grep -q cloudsmith; then
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
