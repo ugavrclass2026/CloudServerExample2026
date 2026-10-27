@@ -22,11 +22,11 @@ sudo apt-get update -qq
 sudo apt-get install -y -qq curl gpg debian-keyring debian-archive-keyring apt-transport-https >/dev/null
 node_major() { command -v node >/dev/null && node -p 'process.versions.node.split(".")[0]' || echo 0; }
 if [ "$(node_major)" -lt 20 ]; then
-  . /etc/os-release
-  if [ "${VERSION_ID%%.*}" -ge 13 ] 2>/dev/null; then
-    sudo apt-get install -y -qq nodejs npm >/dev/null               # Debian 13's own Node is 20
+  APT_NODE=$(apt-cache policy nodejs | awk '/Candidate/{print $2}' | sed 's/^[0-9]*://' | cut -d. -f1)
+  if [ "${APT_NODE:-0}" -ge 20 ] 2>/dev/null; then
+    sudo apt-get install -y -qq nodejs npm >/dev/null               # e.g. Debian 13's own Node is 20
   else
-    # Debian 12 (Google's default image) only has Node 18: take Node 22 from NodeSource instead
+    # Debian 12 and Ubuntu 24.04 only have Node 18: take Node 22 from NodeSource instead
     sudo apt-get remove -y -qq nodejs npm >/dev/null 2>&1 || true
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor --yes -o /usr/share/keyrings/nodesource.gpg
     echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list >/dev/null
